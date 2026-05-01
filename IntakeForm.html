@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Staff Intake — Shelter House</title>
+<script src="msal.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#f5f4f1;--surface:#fff;--surface2:#f0efe9;--border:rgba(0,0,0,.08);--border-strong:rgba(0,0,0,.14);
+  --text:#1a1916;--text-muted:#6b6a65;--text-faint:#a09f9a;
+  --accent:#2d5f8a;--accent-bg:#eaf1f7;--accent-text:#1a3d5c;
+  --green:#2d7a4f;--green-bg:#edf5f0;--red:#a32323;--red-bg:#fdf0f0;
+  --font:'DM Sans',sans-serif;--radius:10px;--radius-sm:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%;font-family:var(--font);background:var(--bg);color:var(--text);font-size:16px;line-height:1.6}
+#loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:100}
+.spinner{width:32px;height:32px;border:2px solid rgba(0,0,0,.1);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading p{font-size:13px;color:var(--text-muted)}
+#app{display:none;max-width:680px;margin:0 auto;padding:32px 20px 60px}
+.header{margin-bottom:32px}
+.header img{height:40px;margin-bottom:16px;display:block}
+.header h1{font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--text)}
+.header p{font-size:13px;color:var(--text-muted);margin-top:4px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:16px}
+.card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.card-title-num{width:22px;height:22px;border-radius:50%;background:var(--accent);color:white;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.form-row.single{grid-template-columns:1fr}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:12px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+.form-label .req{color:var(--red);margin-left:2px}
+.form-input{padding:10px 13px;font-family:var(--font);font-size:15px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface2);color:var(--text);outline:none;transition:border-color .15s}
+.form-input:focus{border-color:var(--accent);background:var(--surface)}
+.form-input.error{border-color:var(--red)}
+.form-hint{font-size:11px;color:var(--text-faint)}
+.form-error{font-size:11px;color:var(--red);display:none}
+.form-error.show{display:block}
+select.form-input{cursor:pointer}
+.submit-area{margin-top:24px;display:flex;align-items:center;gap:12px}
+.btn-submit{font-family:var(--font);font-size:14px;font-weight:500;padding:12px 28px;border-radius:var(--radius-sm);cursor:pointer;border:none;background:var(--accent);color:white;transition:all .15s}
+.btn-submit:hover{background:#1d4a6e}
+.btn-submit:disabled{opacity:.5;cursor:not-allowed}
+.submit-note{font-size:12px;color:var(--text-faint)}
+.success-screen{display:none;text-align:center;padding:48px 20px}
+.success-screen.show{display:block}
+.success-icon{width:56px;height:56px;border-radius:50%;background:var(--green-bg);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:24px}
+.success-screen h2{font-size:20px;font-weight:600;margin-bottom:8px}
+.success-screen p{font-size:13px;color:var(--text-muted);max-width:400px;margin:0 auto 24px}
+.btn-another{font-family:var(--font);font-size:13px;padding:9px 20px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
+.btn-another:hover{background:var(--surface2)}
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="spinner"></div><p>Signing you in...</p></div>
+
+<div id="app">
+  <div id="form-screen">
+    <div style="background:var(--accent);border-radius:var(--radius) var(--radius) 0 0;padding:20px 24px;margin-bottom:0">
+      <img src="logo.png" alt="Shelter House" style="height:36px;display:block;margin-bottom:0;filter:brightness(0) invert(1)" onerror="this.style.display='none'">
+    </div>
+    <div style="background:white;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:20px 24px;margin-bottom:20px">
+      <h1 style="font-size:20px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px">New Staff Intake Form</h1>
+      <p style="font-size:14px;color:var(--text-muted)">Submit this form to notify the Data Team of a new hire. Onboarding tasks will be generated automatically.</p>
+    </div>
+
+    <!-- Section 1: New Staff Info -->
+    <div class="card">
+      <div class="card-title"><span class="card-title-num">1</span>New staff information</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">First name <span class="req">*</span></label>
+          <input class="form-input" id="f-first" type="text" placeholder="Jane">
+          <span class="form-error" id="err-first">Required</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last name <span class="req">*</span></label>
+          <input class="form-input" id="f-last" type="text" placeholder="Smith">
+          <span class="form-error" id="err-last">Required</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Work email <span class="req">*</span></label>
+          <input class="form-input" id="f-email" type="email" placeholder="jane.smith@shelterhouse.org">
+          <span class="form-error" id="err-email">Valid email required</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone</label>
+          <input class="form-input" id="f-phone" type="text" placeholder="(555) 000-0000">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Start date <span class="req">*</span></label>
+          <input class="form-input" id="f-start" type="date">
+          <span class="form-error" id="err-start">Required</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Location / shelter</label>
+          <select class="form-input" id="f-location">
+            <option value="">— Select —</option>
+            <option>Remote</option>
+            <option>Admin</option>
+            <option>AH R1</option>
+            <option>AH R3</option>
+            <option>FES</option>
+            <option>LHS</option>
+            <option>Kennedy</option>
+            <option>Fair Ridge</option>
+            <option>Kate Hanley</option>
+            <option>Mondloch</option>
+            <option>LHSC</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Role -->
+    <div class="card">
+      <div class="card-title"><span class="card-title-num">2</span>Position details</div>
+      <div class="form-row single">
+        <div class="form-group">
+          <label class="form-label">Role / position <span class="req">*</span></label>
+          <select class="form-input" id="f-role">
+            <option value="">— Select a role —</option>
+          </select>
+          <span class="form-error" id="err-role">Required</span>
+          <span class="form-hint" id="role-hint"></span>
+        </div>
+      </div>
+      <div class="form-row single">
+        <div class="form-group">
+          <label class="form-label">Direct supervisor <span class="req">*</span></label>
+          <select class="form-input" id="f-manager">
+            <option value="">— Select supervisor —</option>
+          </select>
+          <span class="form-error" id="err-manager">Required</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Supervisor phone</label>
+          <input class="form-input" id="f-sup-phone" type="text" placeholder="(555) 000-0000">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Will be an HMIS user?</label>
+          <select class="form-input" id="f-hmis">
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 3: Submitter -->
+    <div class="card">
+      <div class="card-title"><span class="card-title-num">3</span>Your information</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Your name <span class="req">*</span></label>
+          <input class="form-input" id="f-sub-name" type="text" placeholder="Auto-filled from your account" readonly style="background:var(--surface2);color:var(--text-muted)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Your email <span class="req">*</span></label>
+          <input class="form-input" id="f-sub-email" type="email" placeholder="Auto-filled from your account" readonly style="background:var(--surface2);color:var(--text-muted)">
+        </div>
+      </div>
+      <div class="form-row single">
+        <div class="form-group">
+          <label class="form-label">Additional notes</label>
+          <textarea class="form-input" id="f-notes" rows="3" placeholder="Any additional context for the Data Team..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-area">
+      <button class="btn-submit" id="btn-submit" onclick="submitForm()">Submit intake form</button>
+      <span class="submit-note">The Data Team will be notified automatically.</span>
+    </div>
+  </div>
+
+  <div class="success-screen" id="success-screen">
+    <div class="success-icon">✓</div>
+    <h2>Intake submitted!</h2>
+    <p id="success-msg">The Data Team has been notified and onboarding tasks have been generated for this staff member.</p>
+    <button class="btn-another" onclick="resetForm()">Submit another</button>
+  </div>
+</div>
+
+<script>
+const CLIENT_ID  = '40c50c14-0c10-4864-a469-3ca5875c692d';
+const TENANT_ID  = '8d11e8a1-1159-4cd5-ad4e-bbdfbe774c87';
+const REDIRECT   = 'https://shelterhousedata.github.io/stafftracker/IntakeForm.html';
+const SCOPES     = ['https://graph.microsoft.com/Sites.ReadWrite.All', 'https://graph.microsoft.com/Mail.Send'];
+const GRAPH      = 'https://graph.microsoft.com/v1.0';
+const SITE_PATH  = 'shelterhouseinc.sharepoint.com:/sites/StaffTracker';
+const DATA_TEAM  = ['jasmine.foster@shelterhouse.org', 'joshua.meade@shelterhouse.org', 'dennis.cartagena@shelterhouse.org'];
+
+let msalApp, token, siteId, staffListId, staffRolesListId, tasksListId;
+let ROLES = [], STAFF = [], TASK_DEFS = [];
+let currentUser = null;
+
+const FIELD_MAP = {
+  Roles:    f => ({ ID: f.id, role_team: f.role_team||f.Title||'', role_type: f.role_type||'', role_title: f.role_title||'', fxco_hmis: f.fxco_hmis||false, ldc_hmis: f.ldc_hmis||false, dv_vela: f.dv_vela||false, dv_icarol: f.dv_icarol||false, dv_vadata: f.dv_vadata||false, fxco_es: f.fxco_es||false, fxco_ph: f.fxco_ph||false, fxco_rrh: f.fxco_rrh||false, fxco_hp: f.fxco_hp||false }),
+  Staff:    f => ({ ID: f.id, full_name: f.Title||f.full_name||'', email: f.email||'' }),
+  TaskDefs: f => ({ ID: f.id, task_event: f.task_event||f.Title||'', task_stage: f.task_stage||'', required_flags: f.required_flags||null })
+};
+
+async function gFetch(url, method='GET', body=null) {
+  const opts = { method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }};
+  if(body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if(!r.ok) throw new Error(r.status + ': ' + await r.text());
+  return method==='PATCH'||method==='POST'&&url.includes('sendMail') ? (r.status===202||r.status===204?null:r.json()) : r.json();
+}
+
+async function spFetch(listName) {
+  const listId = await getListId(listName);
+  const r = await gFetch(GRAPH+'/sites/'+siteId+'/lists/'+listId+'/items?expand=fields&$top=500');
+  const mappers = {
+    Roles:    f => ({ ID: f.id, role_team: f.role_team||f.Title||'', role_type: f.role_type||'', role_title: f.role_title||'', fxco_hmis: f.fxco_hmis||false, ldc_hmis: f.ldc_hmis||false, dv_vela: f.dv_vela||false, dv_icarol: f.dv_icarol||false, dv_vadata: f.dv_vadata||false, fxco_es: f.fxco_es||false, fxco_ph: f.fxco_ph||false, fxco_rrh: f.fxco_rrh||false, fxco_hp: f.fxco_hp||false }),
+    Staff:    f => ({ ID: f.id, full_name: f.Title||f.full_name||'', email: f.email||'' }),
+    TaskDefs: f => ({ ID: f.id, task_event: f.task_event||f.Title||'', task_stage: f.task_stage||'', required_flags: f.required_flags||null })
+  };
+  const mapper = mappers[listName] || (f => ({ ID: f.id, ...f }));
+  return (r.value||[]).map(i => mapper({id:i.id,...i.fields}));
+}
+
+async function spPost(listName, body) {
+  const listId = await getListId(listName);
+  const r = await gFetch(GRAPH+'/sites/'+siteId+'/lists/'+listId+'/items','POST',{fields:body});
+  return { ID: r.id, ...(r.fields||{}) };
+}
+
+const listIdCache = {};
+async function getListId(name) {
+  if(listIdCache[name]) return listIdCache[name];
+  const r = await gFetch(GRAPH+'/sites/'+siteId+"/lists?$filter=displayName eq '"+name+"'");
+  listIdCache[name] = r.value[0].id;
+  return listIdCache[name];
+}
+
+async function init() {
+  msalApp = new msal.PublicClientApplication({
+    auth: { clientId: CLIENT_ID, authority: 'https://login.microsoftonline.com/'+TENANT_ID, redirectUri: REDIRECT },
+    cache: { cacheLocation: 'sessionStorage' }
+  });
+  await msalApp.initialize();
+  const redirect = await msalApp.handleRedirectPromise();
+  if(redirect) { token = redirect.accessToken; }
+  else {
+    const accounts = msalApp.getAllAccounts();
+    if(accounts.length > 0) {
+      try { const r = await msalApp.acquireTokenSilent({scopes:SCOPES,account:accounts[0]}); token = r.accessToken; }
+      catch(e) { await msalApp.acquireTokenRedirect({scopes:SCOPES}); return; }
+    } else { await msalApp.acquireTokenRedirect({scopes:SCOPES}); return; }
+  }
+
+  // Get current user
+  const me = await gFetch(GRAPH+'/me');
+  currentUser = { name: me.displayName, email: me.mail||me.userPrincipalName };
+  document.getElementById('f-sub-name').value = currentUser.name;
+  document.getElementById('f-sub-email').value = currentUser.email;
+
+  // Get site
+  const site = await gFetch(GRAPH+'/sites/'+SITE_PATH);
+  siteId = site.id;
+
+  // Load roles and staff
+  ROLES = await spFetch('Roles');
+  STAFF = await spFetch('Staff');
+  TASK_DEFS = await spFetch('TaskDefs');
+
+  // Populate role dropdown
+  const roleSelect = document.getElementById('f-role');
+  ROLES.sort((a,b)=>a.role_title.localeCompare(b.role_title)).forEach(r => {
+    const o = document.createElement('option');
+    o.value = r.ID;
+    o.textContent = r.role_title + (r.role_team ? ' — ' + r.role_team : '');
+    roleSelect.appendChild(o);
+  });
+
+  // Populate manager dropdown
+  const mgrSelect = document.getElementById('f-manager');
+  STAFF.sort((a,b)=>a.full_name.localeCompare(b.full_name)).forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.ID;
+    o.textContent = s.full_name;
+    mgrSelect.appendChild(o);
+  });
+
+  // Role hint on change
+  document.getElementById('f-role').addEventListener('change', function() {
+    const role = ROLES.find(r=>String(r.ID)===this.value);
+    if(!role) { document.getElementById('role-hint').textContent = ''; return; }
+    const systems = ['fxco_hmis','ldc_hmis','dv_vela','dv_icarol','dv_vadata','fxco_es','fxco_ph','fxco_rrh','fxco_hp'];
+    const labels = {fxco_hmis:'FxCo HMIS',ldc_hmis:'LDC HMIS',dv_vela:'DV Vela',dv_icarol:'DV iCarol',dv_vadata:'DV VAdata',fxco_es:'FxCo ES',fxco_ph:'FxCo PH',fxco_rrh:'FxCo RRH',fxco_hp:'FxCo HP'};
+    const required = systems.filter(s=>role[s]).map(s=>labels[s]);
+    document.getElementById('role-hint').textContent = required.length > 0
+      ? 'Systems required: ' + required.join(', ')
+      : 'No system access required for this role';
+  });
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+function validate() {
+  let valid = true;
+  const checks = [
+    ['f-first', 'err-first', v => v.trim().length > 0],
+    ['f-last', 'err-last', v => v.trim().length > 0],
+    ['f-email', 'err-email', v => /^[^@]+@[^@]+\.[^@]+$/.test(v)],
+    ['f-start', 'err-start', v => v.length > 0],
+    ['f-role', 'err-role', v => v.length > 0],
+    ['f-manager', 'err-manager', v => v.length > 0],
+  ];
+  checks.forEach(([inputId, errId, test]) => {
+    const val = document.getElementById(inputId).value;
+    const ok = test(val);
+    document.getElementById(inputId).classList.toggle('error', !ok);
+    document.getElementById(errId).classList.toggle('show', !ok);
+    if(!ok) valid = false;
+  });
+  return valid;
+}
+
+async function submitForm() {
+  if(!validate()) return;
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  const firstName = document.getElementById('f-first').value.trim();
+  const lastName  = document.getElementById('f-last').value.trim();
+  const fullName  = firstName + ' ' + lastName;
+  const email     = document.getElementById('f-email').value.trim();
+  const phone     = document.getElementById('f-phone').value.trim();
+  const startDate = document.getElementById('f-start').value;
+  const location  = document.getElementById('f-location').value;
+  const roleId    = document.getElementById('f-role').value;
+  const managerId = document.getElementById('f-manager').value;
+  const notes     = document.getElementById('f-notes').value.trim();
+  const role      = ROLES.find(r=>String(r.ID)===roleId);
+  const manager   = STAFF.find(s=>String(s.ID)===managerId);
+
+  try {
+    // 1. Create staff record
+    const staffItem = await spPost('Staff', {
+      Title: fullName, email, phone, location,
+      hire_date: startDate, manager: parseInt(managerId), is_hmis_user: false
+    });
+
+    // 2. Create StaffRoles record
+    await spPost('StaffRoles', {
+      person_id: parseInt(staffItem.ID), role_id: parseInt(roleId), start_date: startDate
+    });
+
+    // 3. Auto-generate onboarding tasks
+    const requiredDefs = TASK_DEFS.filter(td => {
+      if(td.task_stage !== 'Onboard') return false;
+      if(!td.required_flags) return false;
+      if(td.required_flags === '*') return true;
+      return role && role[td.required_flags];
+    });
+    for(const td of requiredDefs) {
+      await spPost('Tasks', { def_id: parseInt(td.ID), subject_id: parseInt(staffItem.ID), created_date: startDate, skipped: false });
+    }
+
+    // 4. Send email notification
+    const systems = ['fxco_hmis','ldc_hmis','dv_vela','dv_icarol','dv_vadata','fxco_es','fxco_ph','fxco_rrh','fxco_hp'];
+    const sysLabels = {fxco_hmis:'FxCo HMIS',ldc_hmis:'LDC HMIS',dv_vela:'DV Vela',dv_icarol:'DV iCarol',dv_vadata:'DV VAdata',fxco_es:'FxCo ES',fxco_ph:'FxCo PH',fxco_rrh:'FxCo RRH',fxco_hp:'FxCo HP'};
+    const requiredSystems = role ? systems.filter(s=>role[s]).map(s=>sysLabels[s]) : [];
+
+    const emailBody = `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+  <div style="background:#2d5f8a;padding:20px 24px;border-radius:8px 8px 0 0">
+    <h2 style="color:white;margin:0;font-size:18px">New Staff Intake — Shelter House</h2>
+  </div>
+  <div style="background:#f9f9f9;padding:24px;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px">
+    <p style="margin:0 0 16px;color:#333">A new staff intake has been submitted. Onboarding tasks have been automatically generated.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <tr><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0;font-weight:600;width:140px">Full name</td><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0">${fullName}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">Email</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">${email}</td></tr>
+      <tr><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0;font-weight:600">Role</td><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0">${role?.role_title||'—'} (${role?.role_team||'—'})</td></tr>
+      <tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">Start date</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">${new Date(startDate).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</td></tr>
+      <tr><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0;font-weight:600">Location</td><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0">${location||'—'}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">Supervisor</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">${manager?.full_name||'—'}</td></tr>
+      <tr><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0;font-weight:600">Systems needed</td><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0">${requiredSystems.length>0?requiredSystems.join(', '):'None required'}</td></tr>
+      <tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">Tasks generated</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">${requiredDefs.length} onboarding tasks</td></tr>
+      <tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">HMIS access</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">${document.getElementById('f-hmis').options[document.getElementById('f-hmis').selectedIndex].text}</td></tr>
+      ${document.getElementById('f-sup-phone').value?'<tr><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0;font-weight:600">Supervisor phone</td><td style="padding:8px 12px;background:#fff;border:1px solid #e0e0e0">'+document.getElementById('f-sup-phone').value+'</td></tr>':''}
+      ${notes?'<tr><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0;font-weight:600">Notes</td><td style="padding:8px 12px;background:#f5f5f5;border:1px solid #e0e0e0">'+notes+'</td></tr>':''}
+    </table>
+    <p style="margin:16px 0 0;font-size:12px;color:#888">Submitted by ${currentUser.name} (${currentUser.email})</p>
+  </div>
+</div>`;
+
+    const toRecipients = DATA_TEAM.map(e => ({ emailAddress: { address: e } }));
+    // Only include valid shelterhouse.org emails in CC
+    const ccRecipients = [
+      { emailAddress: { address: currentUser.email } },
+      ...(email && email.toLowerCase().endsWith('@shelterhouse.org') ? [{ emailAddress: { address: email } }] : [])
+    ].filter(r => !DATA_TEAM.includes(r.emailAddress.address));
+
+    await gFetch(GRAPH+'/me/sendMail', 'POST', {
+      message: {
+        subject: 'New Staff Intake: ' + fullName + ' — ' + (role?.role_title||'Unknown role'),
+        body: { contentType: 'HTML', content: emailBody },
+        toRecipients,
+        ccRecipients
+      },
+      saveToSentItems: true
+    });
+
+    // Show success
+    document.getElementById('form-screen').style.display = 'none';
+    document.getElementById('success-msg').textContent =
+      requiredDefs.length + ' onboarding tasks generated for ' + fullName + '. An email has been sent to the Data Team with Cc to you and ' + fullName + '.';
+    document.getElementById('success-screen').classList.add('show');
+
+  } catch(e) {
+    alert('Error submitting form: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Submit intake form';
+  }
+}
+
+function resetForm() {
+  document.getElementById('form-screen').style.display = 'block';
+  document.getElementById('success-screen').classList.remove('show');
+  document.getElementById('btn-submit').disabled = false;
+  document.getElementById('btn-submit').textContent = 'Submit intake form';
+  ['f-first','f-last','f-email','f-phone','f-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-start').value = '';
+  document.getElementById('f-role').value = '';
+  document.getElementById('f-manager').value = '';
+  document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+  document.querySelectorAll('.form-error').forEach(el => el.classList.remove('show'));
+}
+
+init();
+</script>
+</body>
+</html>
