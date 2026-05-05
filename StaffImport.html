@@ -1,0 +1,2447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Staff Import Tool — Shelter House</title>
+<script src="msal.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #f5f4f1; color: #1a1916; font-size: 14px; padding: 32px; }
+.card { background: white; border-radius: 10px; border: 1px solid rgba(0,0,0,.08); padding: 24px; margin-bottom: 16px; max-width: 800px; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.sub { font-size: 12px; color: #888; margin-bottom: 20px; }
+.btn { font-size: 13px; font-weight: 500; padding: 8px 18px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,.15); background: white; transition: all .1s; margin-right: 8px; }
+.btn-primary { background: #2d5f8a; color: white; border-color: #2d5f8a; }
+.btn-primary:hover { background: #1d4a6e; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.log { background: #1a1916; color: #e0e0e0; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; margin-top: 16px; }
+.log .ok { color: #4caf50; }
+.log .err { color: #f44336; }
+.log .info { color: #64b5f6; }
+.log .warn { color: #ffb74d; }
+.progress { height: 6px; background: #eee; border-radius: 3px; margin: 12px 0; }
+.progress-bar { height: 100%; background: #2d5f8a; border-radius: 3px; transition: width .3s; width: 0%; }
+.stat { display: inline-block; margin-right: 20px; }
+.stat-val { font-size: 24px; font-weight: 300; font-family: monospace; }
+.stat-val.green { color: #2d7a4f; }
+.stat-val.red { color: #a32323; }
+.stat-val.amber { color: #8a5a00; }
+.stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Shelter House Staff Import Tool</h1>
+  <div class="sub">Imports 58 staff members from Staffing_WIP.xlsx into SharePoint — Phase 1: add staff, Phase 2: link managers</div>
+  <div style="margin-bottom:16px">
+    <span class="stat"><div class="stat-val green" id="s-done">0</div><div class="stat-label">Imported</div></span>
+    <span class="stat"><div class="stat-val red" id="s-err">0</div><div class="stat-label">Errors</div></span>
+    <span class="stat"><div class="stat-val amber" id="s-left">58</div><div class="stat-label">Remaining</div></span>
+    <span class="stat"><div class="stat-val" id="s-mgr">0</div><div class="stat-label">Managers linked</div></span>
+  </div>
+  <div class="progress"><div class="progress-bar" id="prog"></div></div>
+  <button class="btn btn-primary" id="btn-start" onclick="startImport()">Sign in & Start Import</button>
+  <button class="btn" id="btn-diag" onclick="diagFields()">Diagnose field names</button>
+  <button class="btn" id="btn-mgr" onclick="linkManagers()" disabled>Phase 2: Link Managers</button>
+  <button class="btn" id="btn-clear" onclick="clearLog()">Clear log</button>
+  <div class="log" id="log"><span class="info">Ready. Click "Sign in & Start Import" to begin.</span></div>
+</div>
+
+<script>
+const CLIENT_ID = '40c50c14-0c10-4864-a469-3ca5875c692d';
+const TENANT_ID = '8d11e8a1-1159-4cd5-ad4e-bbdfbe774c87';
+const REDIRECT  = 'https://shelterhousedata.github.io/stafftracker/StaffImport.html';
+const SCOPES    = ['https://graph.microsoft.com/Sites.ReadWrite.All'];
+const GRAPH     = 'https://graph.microsoft.com/v1.0';
+const SITE_PATH = 'shelterhouseinc.sharepoint.com:/sites/StaffTracker';
+
+let msalApp, token, siteId, staffListId;
+let done=0, errs=0, mgrLinked=0;
+let importedStaff = []; // {name, spId} after phase 1
+
+const STAFF_DATA = [
+  {
+    "full_name": "Darren Cook",
+    "role": "Senior Director of Loudoun Homeless Services",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Admin",
+    "manager_name": "Megan Goffney",
+    "team": "Admin",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jennifer Sandova",
+    "role": "Director of Loudoun Homeless Services",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Darren Cook",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ghazala Shaffi",
+    "role": "Community Housing Program Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Darren Cook",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Cate Morrison",
+    "role": "Program Director of ELDC",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Darren Cook",
+    "team": "Eastern Loudoun Drop-in Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Alexa Burciaga",
+    "role": "Assistant Director of Shelter Operations",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Jennifer Sandova",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tunya Sullivan",
+    "role": "Assistant Director of Programs",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Jennifer Sandova",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sobia Chaudry",
+    "role": "Rapid Rehousing Case Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Ghazala Shaffi",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jordan Baylor",
+    "role": "Case Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Cate Morrison",
+    "team": "Eastern Loudoun Drop-in Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lauren Sibert",
+    "role": "Case Manager",
+    "location": "Eastern Loudoun Drop-in Center",
+    "department": "Community Housing",
+    "manager_name": "Cate Morrison",
+    "team": "Eastern Loudoun Drop-in Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Renee Carlson",
+    "role": "Case Manager",
+    "location": "Eastern Loudoun Drop-in Center",
+    "department": "Community Housing",
+    "manager_name": "Cate Morrison",
+    "team": "Eastern Loudoun Drop-in Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Crystal Colon",
+    "role": "Program Support Coordinator",
+    "location": "Eastern Loudoun Drop-in Center",
+    "department": "Community Housing",
+    "manager_name": "Cate Morrison",
+    "team": "Eastern Loudoun Drop-in Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tori Brooks",
+    "role": "Case Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Cate Morrison",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "John Goldsby",
+    "role": "Senior Case Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Tunya Sullivan",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Inayat Niazi",
+    "role": "Case Manager",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Tunya Sullivan",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lynette Lee",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Uneeb Chohan",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Thomas Dunn",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Mikayla Williams",
+    "role": "Support Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sandy Smith",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Hopeton Harrell",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kelly Cantwell",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Fabiana Becker",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Gina Garnett",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Veronica Thomassesay",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Andre Fontillo",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Joseph Morton",
+    "role": "Custodial Technician",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Elsa Schaeffer",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Maria Eguigure",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Rukhshana Mahbub",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Gary Lawhorn",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Taha Khushabakit",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Myra Sonnenbrot",
+    "role": "Residential Coordinator",
+    "location": "Loudoun Homeless Services Center",
+    "department": "Community Housing",
+    "manager_name": "Alexa Burciaga",
+    "team": "Loudoun Homeless Services Center",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Mindi Merriam",
+    "role": "Senior Director of Domestic Violence Services",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Megan Goffney",
+    "team": "Admin",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lauren Parham",
+    "role": "Director of Counseling and Hotline",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Mindi Merriam",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Allison Hancock",
+    "role": "Program Director of DVSH",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Mindi Merriam",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Negar Ehsani",
+    "role": "Director of Artemis House Region I",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Mindi Merriam",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Charlotte Clark Rowe",
+    "role": "Director of Artemis House Region III",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Mindi Merriam",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Elisabeth Tropea",
+    "role": "Crisis Hotline Program Manager",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Lauren Parham",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Araba Aldoo-Apau",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Bria Wadley",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kadecia Terrell",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Manal Alzer",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Giulia Ferreira Michelon",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nikki Pratt",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Angel Grimaldi",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Victoria Ramassini",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Hollie Sexton",
+    "role": "Hotline Specialist",
+    "location": "Remote",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kolley Purdy",
+    "role": "Hotline Specialist",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Elisabeth Tropea",
+    "team": "Hotline",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Stephanie Schommer",
+    "role": "Senior Rapid Rehousing Case Manager",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Allison Hancock",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kate McDonnell",
+    "role": "Senior Prevention Case Manager",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Allison Hancock",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jasmine Curtis",
+    "role": "Rapid Rehousing Case Manager",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Allison Hancock",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ally Bronson",
+    "role": "Rapid Rehousing Case Manager",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Stephanie Schommer",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Malenta Michinard",
+    "role": "Prevention Case Manager",
+    "location": "Admin",
+    "department": "DV",
+    "manager_name": "Kate McDonnell",
+    "team": "DVSH",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Toni Cooper",
+    "role": "Assistant Director of Shelter Operations",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Charlotte Clark Rowe",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Theresa Pearson",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Carla Johnson",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nik Yazdi",
+    "role": "Case Manager",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Elaine Warburton",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tyesha Shaw",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Eileen Gearhart",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Angel Simmons",
+    "role": "Case Manager",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Elaine Warburton",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Chenise Calson",
+    "role": "Case Manager",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Elaine Warburton",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Laurin Battle",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tiara Dixon",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Charlotte Campbell",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Xiomara Fleming",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lavondra Burns",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kara Chisley",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Barbara Robinson",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ronnetta Barnes",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Stephen Dresdner",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jonathan Johnson",
+    "role": "Support Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Shauna Mowery",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region III",
+    "department": "DV",
+    "manager_name": "Toni Cooper",
+    "team": "AHR3",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Trina Rhodes",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Takia Brown",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Mahadere Getachew",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Mary Reeves",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Desire Quist",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Idowu Ojo",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Angel Proctor",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Briana Gilliam",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lyntoya Topping",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Habib Jah",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Dana Noble",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sarwah Armah-Koranteng",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ronda Hodges",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Dami Omolayo",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kasandra Sanchez Hernandez",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Rajzhane White",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Madison Tuck",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Hamid Sankoh",
+    "role": "Residential Coordinator",
+    "location": "Artemis House Region I",
+    "department": "DV",
+    "manager_name": "Negar Ehsani",
+    "team": "AHR1",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sonya DelVecchio",
+    "role": "Assistant Director of Shelter Operations",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Judy Chang",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ramica Chase",
+    "role": "Diversion First Case Manager",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Roger Bowman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tusheena Moore",
+    "role": "Residential Coordinator",
+    "location": "Mondloch Place",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch Place",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Da'Jon Bellfield",
+    "role": "Residential Coordinator",
+    "location": "Mondloch Place",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch Place",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sheila Kashey",
+    "role": "Residential Coordinator",
+    "location": "Mondloch Place",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch Place",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Leila Sabolic",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nekita Bishop",
+    "role": "Residential Coordinator",
+    "location": "Mondloch Place",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch Place",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Desiree Campbell",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Amanda Lewis",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Arnita Latimer",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Desirae Shepard",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Charlene Walker",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ray Charity",
+    "role": "Custodial and Maintenance",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sharyl Pope",
+    "role": "Residential Coordinator",
+    "location": "Mondloch House",
+    "department": "Community Housing",
+    "manager_name": "Lakia Hyman",
+    "team": "Mondloch House",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Pake Motawi",
+    "role": "Senior Case Manager",
+    "location": "Admin",
+    "department": "Community Housing",
+    "manager_name": "Vivian Boakye",
+    "team": "Community Housing Programs",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Cristina Schuck Adao",
+    "role": "Family Pass Program Manager",
+    "location": "Admin",
+    "department": "Community Housing",
+    "manager_name": "Vivian Boakye",
+    "team": "Family Pass",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Imane Maazouz",
+    "role": "Case Manager",
+    "location": "Admin",
+    "department": "Community Housing",
+    "manager_name": "John Napier",
+    "team": "Community Housing Programs",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Liliana De La O",
+    "role": "Shift Supervisor",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Roynesha DeWalt",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Shalim Mason",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Eddy Ardon",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Victor Smith",
+    "role": "Shift Supervisor",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jackie Valentine",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Shevonna Reed",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Muhammad Mahmood",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tujuanda Blalock",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Craig Pearson",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Titia Carter",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Lee Morris",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Calvin Williams",
+    "role": "Shift Supervisor",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Valentino Dior",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Joy Davila",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ahmed Kristo",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Aman Shirzad",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Amina Rafiq",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Seth Woehrle",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tonia Boone",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Fatimazahra Lach-Hab",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Don Banks",
+    "role": "Shift Supervisor",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Deja Reels",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Laurice Henson",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nabeel Chohan",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Didi Dieke",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Rose Matthews",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sami Benmerzouga",
+    "role": "Residential Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sonya DelVecchio",
+    "team": "Fair Ridge Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tiana Jackson",
+    "role": "Assistant Director of Operations",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Marques Davis",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Evelyn Robinson",
+    "role": "Medical Outreach Case Manager",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Daaiyah Bryant-Harris",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Heath Thayer",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Andre Washington",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Linda Tucker",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tonique Melton",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ashley Morris",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kim Toone",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Benny Adams",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Alyssa Scott",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Eddie Davis",
+    "role": "Kitchen Manager",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ivan Padgett",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Dominic Crentsil",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sierra Cunningham",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Carmen Thomas",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Emergency Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jonah Allen",
+    "role": "Cook",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nesta Morrison",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Demz Ari",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Frank Parham",
+    "role": "Maintenance and Custodial",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Keita Ezi",
+    "role": "Cook",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nikkia Brewer",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Shaquita Miles",
+    "role": "Residential Coordinator",
+    "location": "The Kennedy Shelter",
+    "department": "Community Housing",
+    "manager_name": "Tiana Jackson",
+    "team": "Kennedy Shelter Services",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Steven Perez",
+    "role": "Assistant Director of Shelter Operations",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Sheree Fryar",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kevin Randle",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Roki Kaba",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Montre Davis",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ronnette Anderson",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Patricia Miller",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Bonita Stokes",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "William Puschel",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Zhor Faik",
+    "role": "Kitchen Manager",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Eva Cardona Lopez",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Calvin Robertson",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Mildred Corvera",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Latifa Aloumouati",
+    "role": "Cook",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Karla Hernandez",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Marshall Yaffe",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Monique Chiles",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Alnisa Dennis",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sierra Brown",
+    "role": "Cook",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Joulia Perdomo-Neofitou",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Byron Jones",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Kristy Howard",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Fatima Haidarah",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Yousef Samwili",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Evangeline Wright",
+    "role": "Residential Coordinator",
+    "location": "Katherine Hanley Family Shelter",
+    "department": "Community Housing",
+    "manager_name": "Steven Perez",
+    "team": "Katherine Hanley Family Shelter",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Joe Meyer",
+    "role": "Executive Director and CEO",
+    "location": "Admin",
+    "department": "Executive",
+    "manager_name": "",
+    "team": "Executive",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Jeanette Phillips",
+    "role": "Director of People and Culture",
+    "location": "Admin",
+    "department": "People & Culture",
+    "manager_name": "Joe Meyer",
+    "team": "People & Culture",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sahar Awad",
+    "role": "People and Culture Partner",
+    "location": "Admin",
+    "department": "People & Culture",
+    "manager_name": "Jeanette Phillips",
+    "team": "People & Culture",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Bryan Acosta",
+    "role": "People and Culture Coordinator",
+    "location": "Admin",
+    "department": "People & Culture",
+    "manager_name": "Jeanette Phillips",
+    "team": "People & Culture",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Holly Micozzi",
+    "role": "Chief Financial and Operations Officer",
+    "location": "Admin",
+    "department": "Executive",
+    "manager_name": "Joe Meyer",
+    "team": "Executive",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ana Blanco-Lovos",
+    "role": "Senior Executive Assistant",
+    "location": "Admin",
+    "department": "Executive",
+    "manager_name": "Joe Meyer",
+    "team": "Executive",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "David Maloney",
+    "role": "Controller",
+    "location": "Admin",
+    "department": "Finance",
+    "manager_name": "Holly Micozzi",
+    "team": "Finance",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Edwina Lawson",
+    "role": "Operations Manager",
+    "location": "Admin",
+    "department": "Admin",
+    "manager_name": "Holly Micozzi",
+    "team": "Admin",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Melissa Rosen",
+    "role": "Operations Program Coordinator",
+    "location": "Admin",
+    "department": "Admin",
+    "manager_name": "Edwina Lawson",
+    "team": "Admin",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Ronald Chatelain",
+    "role": "Accountant",
+    "location": "Admin",
+    "department": "Finance",
+    "manager_name": "David Maloney",
+    "team": "Finance",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Felicia Caramat",
+    "role": "Accounting Manager",
+    "location": "Admin",
+    "department": "Finance",
+    "manager_name": "David Maloney",
+    "team": "Finance",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Nurjan Maksutova",
+    "role": "Director of Development",
+    "location": "Remote",
+    "department": "Development",
+    "manager_name": "Joe Meyer",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Tammy Meyer",
+    "role": "Donor Engagement Manager",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Nurjan Maksutova",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Terace Molina",
+    "role": "Marketing and Communications Manager",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Nurjan Maksutova",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Chloe White",
+    "role": "Community Engagement Manager",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Nurjan Maksutova",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Sharmanda Jean-Francois",
+    "role": "Community Coordinator",
+    "location": "Fair Ridge Family Shelter",
+    "department": "Development",
+    "manager_name": "Chloe White",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Felicia Richmond",
+    "role": "Community Coordinator",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Chloe White",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Shatoya Snell",
+    "role": "Community Coordinator",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Chloe White",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Meghan Farrell",
+    "role": "Community Coordinator",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Chloe White",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  },
+  {
+    "full_name": "Linda Kimble",
+    "role": "Community Coordinator",
+    "location": "Admin",
+    "department": "Development",
+    "manager_name": "Chloe White",
+    "team": "Development",
+    "email": "",
+    "hire_date": null,
+    "exit_date": null
+  }
+];
+
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  el.innerHTML += '\n<span class="' + cls + '">' + msg + '</span>';
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+function updateStats() {
+  document.getElementById('s-done').textContent = done;
+  document.getElementById('s-err').textContent = errs;
+  document.getElementById('s-left').textContent = Math.max(0, STAFF_DATA.length - done - errs);
+  document.getElementById('s-mgr').textContent = mgrLinked;
+  document.getElementById('prog').style.width = ((done+errs)/STAFF_DATA.length*100) + '%';
+}
+
+async function getToken() {
+  const accounts = msalApp.getAllAccounts();
+  if(accounts.length > 0) {
+    try {
+      const r = await msalApp.acquireTokenSilent({scopes: SCOPES, account: accounts[0]});
+      return r.accessToken;
+    } catch(e) {}
+  }
+  const r = await msalApp.acquireTokenPopup({scopes: SCOPES});
+  return r.accessToken;
+}
+
+async function gFetch(url, method='GET', body=null) {
+  const opts = { method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } };
+  if(body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if(!r.ok) { const t = await r.text(); throw new Error(r.status + ': ' + t); }
+  return method === 'PATCH' ? null : r.json();
+}
+
+async function setup() {
+  const site = await gFetch(GRAPH + '/sites/' + SITE_PATH);
+  siteId = site.id;
+  const lists = await gFetch(GRAPH + '/sites/' + siteId + '/lists?$filter=displayName eq \'Staff\'');
+  staffListId = lists.value[0].id;
+  log('Connected to SharePoint. Site ID: ' + siteId.split(',')[1].slice(0,8) + '...', 'ok');
+  document.getElementById('btn-diag').disabled = false;
+}
+
+async function diagFields() {
+  if(!token) {
+    msalApp = new msal.PublicClientApplication({
+      auth: { clientId: CLIENT_ID, authority: 'https://login.microsoftonline.com/' + TENANT_ID, redirectUri: REDIRECT },
+      cache: { cacheLocation: 'sessionStorage' }
+    });
+    await msalApp.initialize();
+    try { token = await getToken(); } catch(e) { log('Auth failed: ' + e.message, 'err'); return; }
+    log('Authenticated', 'ok');
+    await setup();
+  }
+  const r = await gFetch(GRAPH + '/sites/' + siteId + '/lists/' + staffListId + '/items?expand=fields&$top=1');
+  if(r.value.length > 0) {
+    log('Real field names from SharePoint:', 'info');
+    Object.keys(r.value[0].fields).forEach(k => log('  ' + k + ': ' + JSON.stringify(r.value[0].fields[k]), 'ok'));
+  }
+}
+
+async function startImport() {
+  document.getElementById('btn-start').disabled = true;
+  log('\n--- PHASE 1: Importing staff ---', 'info');
+  
+  msalApp = new msal.PublicClientApplication({
+    auth: { clientId: CLIENT_ID, authority: 'https://login.microsoftonline.com/' + TENANT_ID, redirectUri: REDIRECT },
+    cache: { cacheLocation: 'sessionStorage' }
+  });
+  await msalApp.initialize();
+  
+  try {
+    token = await getToken();
+    log('Authenticated successfully', 'ok');
+    await setup();
+  } catch(e) {
+    log('Auth failed: ' + e.message, 'err');
+    document.getElementById('btn-start').disabled = false;
+    return;
+  }
+
+  // Skip staff that already exist (check by email)
+  let existingEmails = new Set();
+  try {
+    const existing = await gFetch(GRAPH + '/sites/' + siteId + '/lists/' + staffListId + '/items?expand=fields&$top=500');
+    existing.value.forEach(i => { if(i.fields.email) if(i.fields.email) existingEmails.add(i.fields.email.toLowerCase());
+        if(i.fields.full_name) existingEmails.add(('name:'+i.fields.full_name).toLowerCase());
+        if(i.fields.Title) existingEmails.add(('name:'+i.fields.Title).toLowerCase()); });
+    log('Found ' + existingEmails.size + ' existing staff records — will skip duplicates', 'warn');
+  } catch(e) { log('Could not check existing: ' + e.message, 'warn'); }
+
+  for(const s of STAFF_DATA) {
+    if(existingEmails.has((s.email||'').toLowerCase()) || 
+       existingEmails.has(('name:'+s.full_name).toLowerCase())) {
+      log('SKIP (exists): ' + s.full_name, 'warn');
+      done++;
+      updateStats();
+      continue;
+    }
+    try {
+      const r = await gFetch(
+        GRAPH + '/sites/' + siteId + '/lists/' + staffListId + '/items',
+        'POST',
+        { fields: {
+          Title: s.full_name,
+          email: s.email,
+          location: s.location,
+          hire_date: s.hire_date,
+          exit_date: s.exit_date || null,
+          is_hmis_user: s.fxco || s.ldc
+        }}
+      );
+      importedStaff.push({ name: s.full_name, spId: r.id, manager_name: s.manager_name });
+      log('OK: ' + s.full_name + ' (ID: ' + r.id + ')', 'ok');
+      done++;
+    } catch(e) {
+      log('ERR: ' + s.full_name + ' — ' + e.message, 'err');
+      errs++;
+    }
+    updateStats();
+    await new Promise(res=>setTimeout(res, 150)); // rate limit buffer
+  }
+
+  log('\n--- Phase 1 complete: ' + done + ' imported, ' + errs + ' errors ---', 'info');
+  log('Click "Phase 2: Link Managers" to set manager relationships', 'info');
+  document.getElementById('btn-mgr').disabled = false;
+}
+
+async function linkManagers() {
+  document.getElementById('btn-mgr').disabled = true;
+  log('\n--- PHASE 2: Linking managers ---', 'info');
+
+  // Fetch all staff to build name->ID map
+  let allStaff = [];
+  try {
+    const r = await gFetch(GRAPH + '/sites/' + siteId + '/lists/' + staffListId + '/items?expand=fields&$top=500');
+    allStaff = r.value.map(i=>({ id: i.id, name: (i.fields.Title||i.fields.full_name||'').trim() }));
+    log('Loaded ' + allStaff.length + ' staff records for name matching', 'info');
+  } catch(e) { log('Failed to load staff: ' + e.message, 'err'); return; }
+
+  const nameToId = {};
+  allStaff.forEach(s => { nameToId[s.name.toLowerCase()] = s.id; });
+
+  // Match each person's manager
+  for(const s of STAFF_DATA) {
+    if(!s.manager_name) continue;
+    const managerId = nameToId[s.manager_name.toLowerCase()];
+    if(!managerId) { log('WARN: Manager not found: "' + s.manager_name + '" for ' + s.full_name, 'warn'); continue; }
+    const staffId = nameToId[s.full_name.toLowerCase()];
+    if(!staffId) { log('WARN: Staff not found: ' + s.full_name, 'warn'); continue; }
+    try {
+      await gFetch(
+        GRAPH + '/sites/' + siteId + '/lists/' + staffListId + '/items/' + staffId + '/fields',
+        'PATCH',
+        { manager: parseInt(managerId) }
+      );
+      log('Linked: ' + s.full_name + ' -> ' + s.manager_name, 'ok');
+      mgrLinked++;
+    } catch(e) {
+      log('ERR linking ' + s.full_name + ': ' + e.message, 'err');
+    }
+    updateStats();
+    await new Promise(res=>setTimeout(res, 150));
+  }
+
+  log('\n--- Phase 2 complete: ' + mgrLinked + ' managers linked ---', 'info');
+  log('Done! Refresh your Staff Tracker to see all imported staff.', 'ok');
+}
+</script>
+</body>
+</html>
