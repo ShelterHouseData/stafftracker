@@ -873,9 +873,15 @@ async function getListId(name) {
 async function spFetch(name) {
   const siteId = await getSiteId();
   const listId = await getListId(name);
-  const j = await gFetch(`${GRAPH}/sites/${siteId}/lists/${listId}/items?expand=fields&$top=500`);
   const mapper = FIELD_MAP[name] || (f => ({ID: f.id, ...f}));
-  return (j.value || []).map(item => mapper({id: item.id, ...item.fields}));
+  let url = `${GRAPH}/sites/${siteId}/lists/${listId}/items?expand=fields&$top=999`;
+  let all = [];
+  while(url) {
+    const j = await gFetch(url);
+    all = all.concat((j.value||[]).map(item => mapper({id: item.id, ...item.fields})));
+    url = j['@odata.nextLink'] || null;
+  }
+  return all;
 }
 
 async function spPost(name, body) {
@@ -960,13 +966,10 @@ async function quickCompleteTask(defId, staffId) {
   const by = DATA.staff.find(s=>s.email===msalApp.getAllAccounts()[0]?.username)?.full_name || 'Data Team';
   try {
     const existing = DATA.tasks.find(t=>String(t.def_id)==String(defId)&&String(t.subject_id)==String(staffId));
-    console.log('[quickComplete] defId:', defId, 'staffId:', staffId, 'existing:', existing?.ID, 'by:', by);
     if(existing) await spPatch('Tasks', existing.ID, {updated_date:today, updated_by:by, skipped:false});
     else await spPost('Tasks', {def_id:parseInt(defId), subject_id:parseInt(staffId), created_date:today, updated_date:today, updated_by:by, skipped:false});
-    await loadData();
-    const check = DATA.tasks.find(t=>String(t.def_id)==String(defId)&&String(t.subject_id)==String(staffId));
-    console.log('[quickComplete] after reload, task:', check);
     showToast('Task marked complete');
+    await loadData();
     renderProfile(parseInt(staffId));
     renderDashboard();
   } catch(e) { alert(`Error: ${e.message}`); }
