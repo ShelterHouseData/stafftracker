@@ -1377,7 +1377,7 @@ function renderDashboard() {
   }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text-faint);padding:20px">All tasks clear</td></tr>';
   const vacRoles = DATA.roles.filter(r=>!DATA.staffRoles.some(sr=>sr.role_id==r.ID&&!sr.end_date));
   document.getElementById('vacancies-list').innerHTML = vacRoles.slice(0,6).map(r=>`<div class="panel-row"><div><div style="font-size:12px;font-weight:500">${r.role_title}</div><div style="font-size:11px;color:var(--text-faint)">${r.department||''}</div></div><span class="badge badge-red">Vacant</span></div>`).join('') + (vacRoles.length>6?`<div class="panel-row" style="justify-content:center;color:var(--text-faint);font-size:11px;cursor:default">+${vacRoles.length-6} more</div>`:'');
-  document.getElementById('systems-overview').innerHTML = SYSTEMS.map(sys => `<div class="panel-row"><span class="sys-chip active" style="font-size:11px">${SYS_LABELS[sys]}</span><span style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">${DATA.staffRoles.filter(sr=>!sr.end_date&&sr[sys]).length} licensed</span></div>`).join('');
+  document.getElementById('systems-overview').innerHTML = ALL_FLAGS.filter(fl=>fl.group==='Licenses').map(fl => `<div class="panel-row"><span class="sys-chip active" style="font-size:11px">${fl.label}</span><span style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">${DATA.staffRoles.filter(sr=>!sr.end_date&&sr[fl.key]).length} licensed</span></div>`).join('');
 }
 
 function renderDirectory() {
@@ -1422,7 +1422,7 @@ function renderProfile(id) {
   }).join('');
   const done = assignedTasks.filter(t=>t.updated_by&&!t.skipped).length;
   const pending = getPendingTasks(s.ID);
-  const sysList = placement ? ALL_FLAGS.filter(fl=>fl.group==='Licenses'&&placement[fl.key]).map(fl=>`<span class="sys-chip active clickable" onclick="openSysPanel('${fl.key}')" title="${fl.label}">${fl.label}</span>`).join('') : '<span style="font-size:12px;color:var(--text-faint)">No licenses assigned</span>';
+  const sysList = placement ? ALL_FLAGS.filter(fl=>placement[fl.key]).map(fl=>`<span class="sys-chip active clickable" style="${fl.group==='Training'?'background:rgba(74,171,114,.12);color:#4aab72;border-color:rgba(74,171,114,.2)':fl.group==='Access'||fl.group==='Misc'?'background:rgba(58,171,180,.12);color:#3aabb4;border-color:rgba(58,171,180,.2)':''}" onclick="openSysPanel('${fl.key}')" title="${fl.group}: ${fl.label}">${fl.label}</span>`).join('') : '<span style="font-size:12px;color:var(--text-faint)">No licenses or training assigned</span>';
   const opehRecords = DATA.opehTraining.filter(r=>r.person_id==id);
   const latestPerCode = {};
   opehRecords.forEach(r=>{ if(!latestPerCode[r.training_code]||r.date_completed>latestPerCode[r.training_code].date_completed) latestPerCode[r.training_code]=r; });
@@ -1431,7 +1431,7 @@ function renderProfile(id) {
     : `<span style="font-size:12px;color:var(--text-faint)">No trainings logged</span>`;
   const subdivStr = placement ? [placement.subdivision, placement.team].filter(x=>x&&x!=='n/a').join(' · ') : '—';
   const roleDateStr = placement?.role_date ? new Date(placement.role_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '—';
-  document.getElementById('dir-profile-panel').innerHTML = `<div class="profile-wrap"><div class="profile-top"><div class="profile-av-name"><div class="avatar ${avatarColor(s.full_name)}" style="width:48px;height:48px;font-size:16px;font-weight:600;border-radius:50%;display:flex;align-items:center;justify-content:center">${initials(s.full_name)}</div><div><div class="profile-name">${s.full_name}</div><div class="profile-title">${role?.role_title||'No role assigned'}${placement?.division&&placement.division!=='n/a'?' · '+placement.division:''}</div></div><div style="margin-left:auto">${statusBadge(s)}</div></div><div class="profile-meta"><div class="profile-meta-item">Email <span>${s.email||'—'}</span></div><div class="profile-meta-item">Phone <span>${s.phone||'—'}</span></div><div class="profile-meta-item">Department <span>${placement?.department||s.department||'—'}</span></div><div class="profile-meta-item">Region <span>${placement?.region&&placement.region!=='n/a'?placement.region:'—'}</span></div><div class="profile-meta-item">Subdivision / Team <span>${subdivStr}</span></div><div class="profile-meta-item">Site <span>${placement?.site||s.location||'—'}</span></div><div class="profile-meta-item">Manager <span>${getStaffName(s.manager)}</span></div><div class="profile-meta-item">Hire date <span>${s.hire_date?new Date(s.hire_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</span></div><div class="profile-meta-item">Role since <span>${roleDateStr}</span></div></div><div class="profile-actions"><button class="btn" onclick="openLogTaskForStaff(${s.ID})">Assign task</button><button class="btn" onclick="openEditStaff(${s.ID})">Edit</button><button class="btn" style="color:var(--red);border-color:rgba(163,35,35,.3)" onclick="openOffboardModal(${s.ID})">Offboard</button><button class="btn" style="color:var(--text-faint);border-color:var(--border);margin-left:auto" onclick="deleteStaff(${s.ID})">Delete</button></div></div>${assignedTasks.length>0?`<div class="profile-section"><div class="profile-section-head">Tasks — ${done}/${assignedTasks.length} done · ${pending.length} pending</div><div class="profile-section-body" style="padding:0 16px">${taskRows}</div></div>`:''}<div class="profile-section"><div class="profile-section-head">Licenses &amp; access</div><div class="profile-section-body"><div class="sys-list">${sysList}</div></div></div><div class="profile-section"><div class="profile-section-head" style="display:flex;align-items:center;justify-content:space-between">OPEH trainings<button class="btn" style="font-size:11px;padding:2px 10px;height:auto" onclick="opehPanelStaffId=${s.ID};openAddOpehTraining()">+ Log</button></div><div class="profile-section-body"><div class="training-tags-wrap">${opehTagsHtml}</div></div></div></div>`;
+  document.getElementById('dir-profile-panel').innerHTML = `<div class="profile-wrap"><div class="profile-top"><div class="profile-av-name"><div class="avatar ${avatarColor(s.full_name)}" style="width:48px;height:48px;font-size:16px;font-weight:600;border-radius:50%;display:flex;align-items:center;justify-content:center">${initials(s.full_name)}</div><div><div class="profile-name">${s.full_name}</div><div class="profile-title">${role?.role_title||'No role assigned'}${placement?.division&&placement.division!=='n/a'?' · '+placement.division:''}</div></div><div style="margin-left:auto">${statusBadge(s)}</div></div><div class="profile-meta"><div class="profile-meta-item">Email <span>${s.email||'—'}</span></div><div class="profile-meta-item">Phone <span>${s.phone||'—'}</span></div><div class="profile-meta-item">Department <span>${placement?.department||s.department||'—'}</span></div><div class="profile-meta-item">Region <span>${placement?.region&&placement.region!=='n/a'?placement.region:'—'}</span></div><div class="profile-meta-item">Subdivision / Team <span>${subdivStr}</span></div><div class="profile-meta-item">Site <span>${placement?.site||s.location||'—'}</span></div><div class="profile-meta-item">Manager <span>${getStaffName(s.manager)}</span></div><div class="profile-meta-item">Hire date <span>${s.hire_date?new Date(s.hire_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</span></div><div class="profile-meta-item">Role since <span>${roleDateStr}</span></div></div><div class="profile-actions"><button class="btn" onclick="openLogTaskForStaff(${s.ID})">Assign task</button><button class="btn" onclick="openEditStaff(${s.ID})">Edit</button><button class="btn" style="color:var(--red);border-color:rgba(163,35,35,.3)" onclick="openOffboardModal(${s.ID})">Offboard</button><button class="btn" style="color:var(--text-faint);border-color:var(--border);margin-left:auto" onclick="deleteStaff(${s.ID})">Delete</button></div></div>${assignedTasks.length>0?`<div class="profile-section"><div class="profile-section-head">Tasks — ${done}/${assignedTasks.length} done · ${pending.length} pending</div><div class="profile-section-body" style="padding:0 16px">${taskRows}</div></div>`:''}<div class="profile-section"><div class="profile-section-head">Licenses, training &amp; access</div><div class="profile-section-body"><div class="sys-list">${sysList}</div></div></div><div class="profile-section"><div class="profile-section-head" style="display:flex;align-items:center;justify-content:space-between">OPEH trainings<button class="btn" style="font-size:11px;padding:2px 10px;height:auto" onclick="opehPanelStaffId=${s.ID};openAddOpehTraining()">+ Log</button></div><div class="profile-section-body"><div class="training-tags-wrap">${opehTagsHtml}</div></div></div></div>`;
 }
 
 function renderTasksView() {
@@ -2118,7 +2118,7 @@ function renderOpehPanelBody(staffId) {
       <div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
           <span class="training-record-code">${r.training_code}</span>
-          <span class="training-record-date">${fmtDate(r.date_completed)}</span>
+          <span class="training-record-date" onclick="startEditDate(this, ${r.ID})" title="Click to edit date" style="cursor:pointer;border-bottom:1px dashed var(--text-faint)">${fmtDate(r.date_completed)}</span>
           <button onclick="deleteOpehRecord(${r.ID})" style="margin-left:auto;background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:11px;padding:0 2px" title="Delete record">✕</button>
         </div>
         <div class="training-note" data-record-id="${r.ID}" onclick="startEditNote(this, ${r.ID})">${r.notes || '<span style="color:var(--text-faint);font-style:italic">Click to add notes…</span>'}</div>
@@ -2134,6 +2134,28 @@ function renderOpehPanelBody(staffId) {
     : '';
 
   document.getElementById('opeh-panel-body').innerHTML = activeHtml + logHtml;
+}
+
+function startEditDate(el, recordId) {
+  const current = DATA.opehTraining.find(r=>r.ID==recordId)?.date_completed;
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.className = 'training-note editing';
+  input.value = current ? current.split('T')[0] : '';
+  input.style.width = '140px';
+  el.replaceWith(input);
+  input.focus();
+  input.addEventListener('blur', async () => {
+    const newVal = input.value;
+    if(newVal) {
+      try {
+        await spPatch('StaffTrainingOPEH', recordId, {date_completed: newVal});
+        const rec = DATA.opehTraining.find(r=>r.ID==recordId);
+        if(rec) rec.date_completed = newVal;
+      } catch(e) { alert('Error saving date: ' + e.message); }
+    }
+    renderOpehPanelBody(opehPanelStaffId);
+  });
 }
 
 function startEditNote(el, recordId) {
@@ -2207,6 +2229,7 @@ window.openAddOpehTraining = openAddOpehTraining;
 window.submitOpehTraining = submitOpehTraining;
 window.deleteOpehRecord = deleteOpehRecord;
 window.startEditNote = startEditNote;
+window.startEditDate = startEditDate;
 
 // ── OPEH Rubric View ──
 function renderOpehRubric() {
